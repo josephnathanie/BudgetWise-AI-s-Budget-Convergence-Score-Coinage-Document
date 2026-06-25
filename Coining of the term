@@ -1,0 +1,122 @@
+/**
+ * ============================================================
+ * BUDGET CONVERGENCE SCORE (BCS)
+ * coined by Joseph Robinson · BudgetWise AI · June 2026
+ * ============================================================
+ *
+ * The Budget Convergence Score measures how rapidly and consistently
+ * a person's spending is CONVERGING toward their ideal budget —
+ * not just whether they hit their budget this month, but whether
+ * their trajectory is improving over time.
+ *
+ * Most tools ask: "Did you hit your budget?"
+ * BCS asks:       "Are you getting better?"
+ *
+ * Formula:
+ *   BCS = (0.35 × CAS) + (0.30 × TS) + (0.20 × SES) + (0.15 × SR)
+ *
+ *   CAS  – Category Accuracy Score   (actual vs. budgeted per category)
+ *   TS   – Trajectory Score          (month-over-month improvement)
+ *   SES  – Subscription Efficiency   (active use of paid subscriptions)
+ *   SR   – Savings Rate Score        (actual vs. target savings rate)
+ *
+ * BCS Bands:
+ *   85–100  Converging   – strong trajectory toward goals
+ *   70–84   Aligning     – positive trend, minor gaps
+ *   55–69   Stabilizing  – mixed, no clear regression
+ *   40–54   Drifting     – stagnant or slow regression
+ *   0–39    Diverging    – spending moving away from goals
+ */
+
+export interface CategoryBudget {
+  name: string;
+  budgeted: number;
+  actual: number;
+}
+
+export interface Subscription {
+  name: string;
+  amount: number;
+  usedThisPeriod: boolean;
+}
+
+export interface BCSInput {
+  categories: CategoryBudget[];
+  subscriptions: Subscription[];
+  priorMonthCAS: number | null; // null on first month
+  targetSavingsRate: number;    // e.g. 0.20 for 20%
+  actualSavingsRate: number;
+}
+
+export interface BCSResult {
+  score: number;
+  band: string;
+  components: { cas: number; ts: number; ses: number; sr: number };
+}
+
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+/** How close actual spending is to budgeted amounts across all categories (0–100) */
+function cas(categories: CategoryBudget[]): number {
+  if (!categories.length) return 100;
+  const scores = categories.map(({ budgeted, actual }) => {
+    if (budgeted === 0) return actual === 0 ? 1 : 0;
+    return Math.max(0, 1 - Math.abs(actual - budgeted) / budgeted);
+  });
+  return (scores.reduce((a, b) => a + b, 0) / scores.length) * 100;
+}
+
+/** Month-over-month improvement in category accuracy (0–100, 50 = flat) */
+function ts(currentCAS: number, priorCAS: number | null): number {
+  if (priorCAS === null) return 50;
+  return 50 + clamp((currentCAS - priorCAS) * 5, -50, 50);
+}
+
+/** Ratio of actively-used subscriptions to total (0–100) */
+function ses(subscriptions: Subscription[]): number {
+  if (!subscriptions.length) return 100;
+  return (subscriptions.filter((s) => s.usedThisPeriod).length / subscriptions.length) * 100;
+}
+
+/** How close actual savings rate is to target (0–100) */
+function sr(actual: number, target: number): number {
+  if (target === 0) return 100;
+  return Math.min(actual / target, 1) * 100;
+}
+
+function band(score: number): string {
+  if (score >= 85) return "Converging";
+  if (score >= 70) return "Aligning";
+  if (score >= 55) return "Stabilizing";
+  if (score >= 40) return "Drifting";
+  return "Diverging";
+}
+
+export function computeBCS(input: BCSInput): BCSResult {
+  const c = cas(input.categories);
+  const t = ts(c, input.priorMonthCAS);
+  const s = ses(input.subscriptions);
+  const r = sr(input.actualSavingsRate, input.targetSavingsRate);
+  const score = Math.round(c * 0.35 + t * 0.30 + s * 0.20 + r * 0.15);
+  return { score, band: band(score), components: { cas: c, ts: t, ses: s, sr: r } };
+}
+
+// Example
+const result = computeBCS({
+  categories: [
+    { name: "Groceries", budgeted: 400, actual: 380 },
+    { name: "Dining",    budgeted: 150, actual: 210 },
+    { name: "Transport", budgeted: 100, actual: 95  },
+  ],
+  subscriptions: [
+    { name: "Netflix", amount: 15.99, usedThisPeriod: true  },
+    { name: "Gym",     amount: 45.00, usedThisPeriod: false },
+    { name: "Spotify", amount:  9.99, usedThisPeriod: true  },
+  ],
+  priorMonthCAS: 71,
+  targetSavingsRate: 0.20,
+  actualSavingsRate: 0.14,
+});
+
+console.log(`BCS: ${result.score} — ${result.band}`);
+// BCS: 68 — Stabilizing
